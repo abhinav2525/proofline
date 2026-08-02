@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.log
+
+# Local scratch / dogfooding artifacts
+.proofline/
+!tests/fixtures/**/.proofline/
