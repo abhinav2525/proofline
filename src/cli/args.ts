@@ -7,6 +7,7 @@ import path from "node:path";
  *
  *   proofline <command> [--json] [--root <dir>] [--force]
  *             [--criterion <id>]... [--verifier <id>]...
+ *             [--by <name>] [--note <note>]
  */
 export interface ParsedCli {
   command: string | undefined;
@@ -19,6 +20,8 @@ export interface ParsedCli {
   version: boolean;
   criteria: string[];
   verifiers: string[];
+  by: string | undefined;
+  note: string | undefined;
 }
 
 export class ArgsError extends Error {
@@ -38,6 +41,8 @@ export function parseCli(argv: string[], cwd: string): ParsedCli {
         yes: { type: "boolean", short: "y", default: false },
         criterion: { type: "string", multiple: true },
         verifier: { type: "string", multiple: true },
+        by: { type: "string" },
+        note: { type: "string" },
         help: { type: "boolean", short: "h", default: false },
         version: { type: "boolean", short: "v", default: false },
       },
@@ -60,5 +65,7 @@ export function parseCli(argv: string[], cwd: string): ParsedCli {
     version: parsed.values.version ?? false,
     criteria: parsed.values.criterion ?? [],
     verifiers: parsed.values.verifier ?? [],
+    by: parsed.values.by,
+    note: parsed.values.note,
   };
 }

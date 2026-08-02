@@ -11,6 +11,7 @@ import { runStatus } from "../commands/status.ts";
 import { runInit } from "../commands/init.ts";
 import { runBrief } from "../commands/brief.ts";
 import { runVerify } from "../commands/verify.ts";
+import { runApprove } from "../commands/approve.ts";
 import type { CommandContext } from "./command.ts";
 
 type Handler = (ctx: CommandContext) => Promise<CommandResult>;
@@ -22,6 +23,7 @@ const HANDLERS: Record<string, Handler> = {
   init: runInit,
   brief: runBrief,
   verify: runVerify,
+  approve: runApprove,
 };
 
 function write(stream: NodeJS.WriteStream, text: string): void {

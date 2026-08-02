@@ -57,11 +57,20 @@ proofline validate   Check the contract is well-formed
 proofline context    Compact, non-secret snapshot of remaining work
 proofline status     Report each criterion's state
 proofline verify     Run declared verifiers and record evidence
+proofline approve    Record a human approval for a criterion that requires one
 ```
 
 Global flags: `--json` (machine-readable stdout), `--root <dir>`,
 `-h/--help`, `-v/--version`. `verify` accepts repeatable `--criterion <id>` and
-`--verifier <id>` filters. `brief`/`init` accept `--force`.
+`--verifier <id>` filters. `approve` takes the criterion id as a positional plus
+a required `--by <name>` and an optional `--note <note>`. `brief`/`init` accept
+`--force`.
+
+`approve` records a delivery decision, not a check: it runs no verifiers and
+never finalizes delivery. A criterion with `requiresApproval: true` stays
+`blocked` until approved, even when its verifiers pass. Because the verification
+digest excludes approvals, granting one turns a `blocked` criterion `proven`
+without invalidating current verifier evidence — no rerun needed.
 
 ### Example
 
@@ -72,6 +81,8 @@ cat answers.json | proofline brief
 proofline validate
 proofline verify
 proofline status
+# for a criterion that requires sign-off, once its verifiers pass:
+proofline approve <criterion> --by "Your Name" --note "reviewed"
 ```
 
 > **Never put credentials, tokens, passwords, or API keys in verifier arguments.**
