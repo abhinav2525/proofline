@@ -74,6 +74,12 @@ proofline verify
 proofline status
 ```
 
+> **Never put credentials, tokens, passwords, or API keys in verifier arguments.**
+> Proofline records each verifier's argv in the delivery contract and its
+> evidence records so that verification remains reviewable. Use a local,
+> user-controlled credential mechanism outside the contract when a verifier
+> genuinely needs authentication.
+
 ## Execution & security limits
 
 - **argv only.** Verifiers are executed via `Bun.spawn` with a validated

@@ -164,7 +164,7 @@ async function collectInteractive(): Promise<Collected> {
     if (clack.isCancel(id)) return CANCELLED;
 
     const argvRaw = await clack.text({
-      message: "Command as separate arguments (whitespace-separated, no shell):",
+      message: "Command arguments (whitespace-separated; no shell; never include credentials):",
       placeholder: "bun test",
       validate: required("A program"),
     });
