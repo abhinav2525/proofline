@@ -1,0 +1,13 @@
+version: 1
+outcome: verifier tries to escape the root
+mode: strict
+criteria:
+  - id: c1
+    description: something
+    verifiers:
+      - v1
+verifiers:
+  - id: v1
+    argv:
+      - "true"
+    cwd: ../../etc

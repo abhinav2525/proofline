@@ -1,0 +1,13 @@
+version: 1
+outcome: has an unknown field
+mode: strict
+surprise: true
+criteria:
+  - id: c1
+    description: something
+    verifiers:
+      - v1
+verifiers:
+  - id: v1
+    argv:
+      - "true"

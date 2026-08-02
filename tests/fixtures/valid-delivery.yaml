@@ -1,0 +1,34 @@
+version: 1
+outcome: Export widgets to CSV without data loss
+mode: strict
+constraints:
+  - No network access during export
+  - Output must be UTF-8
+criteria:
+  - id: unit-tests
+    description: Unit tests pass
+    verifiers:
+      - unit
+  - id: exporter-smoke
+    description: The exporter produces a non-empty CSV for the sample input
+    verifiers:
+      - smoke
+  - id: design-review
+    description: A human has reviewed the CSV column layout
+    requiresApproval: true
+verifiers:
+  - id: unit
+    description: Run the unit suite
+    argv:
+      - bun
+      - test
+    timeoutMs: 60000
+  - id: smoke
+    description: Run the exporter smoke check
+    argv:
+      - bun
+      - run
+      - scripts/smoke.ts
+    cwd: .
+    timeoutMs: 30000
+approvals: []

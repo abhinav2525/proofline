@@ -1,0 +1,13 @@
+version: 1
+outcome: &o uses an alias
+mode: strict
+alias_outcome: *o
+criteria:
+  - id: c1
+    description: something
+    verifiers:
+      - v1
+verifiers:
+  - id: v1
+    argv:
+      - "true"

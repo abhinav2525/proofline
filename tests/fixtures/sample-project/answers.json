@@ -1,0 +1,13 @@
+{
+  "outcome": "Sample project proves the brief -> verify -> status flow",
+  "mode": "strict",
+  "constraints": ["verifiers must stay inside the project root"],
+  "criteria": [
+    { "id": "ok-check", "description": "the ok verifier passes", "verifiers": ["ok"] },
+    { "id": "fail-check", "description": "the demo failing verifier", "verifiers": ["fail"] }
+  ],
+  "verifiers": [
+    { "id": "ok", "description": "always passes", "argv": ["bun", "run", "check-ok.ts"] },
+    { "id": "fail", "description": "always fails (demo)", "argv": ["bun", "run", "check-fail.ts"] }
+  ]
+}
