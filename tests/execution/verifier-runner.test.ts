@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -54,15 +56,44 @@ describe("runVerifier", () => {
     expect(r.result).toBe("timed-out");
   });
 
-  test("truncates output but keeps the full-output digest and byte count", async () => {
+  test("on timeout it kills descendants and does not block on their pipes", async () => {
+    // The direct child spawns a grandchild that inherits our stdout pipe, sleeps,
+    // and only then writes a marker. If we kill just the direct child, the
+    // grandchild keeps the pipe open (blocking our reads) and runs to completion.
+    const marker = path.join(root, "gc-marker.txt");
+    const inner = "await Bun.sleep(3000); await Bun.write('gc-marker.txt','x')";
+    const script =
+      `const gc = Bun.spawn(['bun','-e',${JSON.stringify(inner)}], ` +
+      `{ stdout: 'inherit', stderr: 'inherit' }); await gc.exited;`;
+
+    const began = Date.now();
+    const r = await runVerifier(
+      verifier({ argv: ["bun", "-e", script], timeoutMs: 300 }),
+      { projectRoot: root, maxOutputBytes: 200 },
+    );
+    const elapsed = Date.now() - began;
+
+    expect(r.result).toBe("timed-out");
+    // Must not wait ~3s for the grandchild to finish holding the pipe.
+    expect(elapsed).toBeLessThan(2200);
+    // The descendant was terminated before it could write its marker.
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test("keeps a full-output digest and byte count without retaining the output", async () => {
     const r = await runVerifier(
       verifier({ argv: ["bun", "-e", "process.stdout.write('x'.repeat(100000))"] }),
       opts(),
     );
     expect(r.result).toBe("passed");
+    // No output/preview is exposed at all — only structural metadata.
+    expect(r).not.toHaveProperty("outputPreview");
+    expect(r.outputBytes).toBe(100000);
+    // Digest covers the full output even though the output is never stored.
+    const expected = createHash("sha256").update("x".repeat(100000)).digest("hex");
+    expect(r.outputDigest).toBe(expected);
+    // Output exceeded the byte cap, so it is flagged truncated for the reader.
     expect(r.truncated).toBe(true);
-    expect(r.outputBytes).toBeGreaterThanOrEqual(100000);
-    expect(r.outputPreview.length).toBeLessThanOrEqual(200);
   });
 
   test("refuses a cwd that escapes the project root", async () => {
@@ -80,6 +111,31 @@ describe("runVerifier", () => {
     void r;
   });
 
+  test("refuses a cwd that reaches outside the root via an internal symlink", async () => {
+    // A symlink *inside* the project root that points to an external directory
+    // is lexically contained but really escapes. The command must not run.
+    const external = await mkdtemp(path.join(tmpdir(), "proofline-external-"));
+    try {
+      const link = path.join(root, "escape");
+      await symlink(external, link, "dir");
+      const marker = path.join(external, "ran-marker.txt");
+
+      const r = await runVerifier(
+        verifier({
+          argv: ["bun", "-e", "await Bun.write('ran-marker.txt', 'x')"],
+          cwd: "escape",
+        }),
+        { projectRoot: root, maxOutputBytes: 200 },
+      );
+
+      expect(r.result).toBe("spawn-error");
+      // Prove no command executed in the external directory.
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      await rm(external, { recursive: true, force: true });
+    }
+  });
+
   test("does not leak parent environment secrets to the child", async () => {
     const script =
       "process.stdout.write(process.env.PROOFLINE_TEST_SECRET ? 'LEAK' : 'clean')";
@@ -88,8 +144,11 @@ describe("runVerifier", () => {
       maxOutputBytes: 200,
       parentEnv: { PROOFLINE_TEST_SECRET: "hunter2", PATH: process.env.PATH ?? "" },
     });
-    expect(r.outputPreview).toContain("clean");
-    expect(r.outputPreview).not.toContain("LEAK");
+    // Output is never retained, so assert via the digest: the child emitted
+    // 'clean' (secret absent), not 'LEAK' (secret inherited).
+    expect(r.outputDigest).toBe(createHash("sha256").update("clean").digest("hex"));
+    expect(r.outputDigest).not.toBe(createHash("sha256").update("LEAK").digest("hex"));
+    expect(r.outputBytes).toBe("clean".length);
   });
 
   test("throws VerifierCancelledError when aborted", async () => {

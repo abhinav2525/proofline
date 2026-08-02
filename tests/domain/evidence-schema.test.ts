@@ -18,7 +18,6 @@ const validRecord = {
   timestamp: "2026-08-02T00:00:00.000Z",
   outputBytes: 42,
   outputDigest: "b".repeat(64),
-  outputPreview: "ok",
   truncated: false,
 };
 

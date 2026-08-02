@@ -69,5 +69,5 @@ export async function appendEvidence(
   }
   const log = existing.log;
   log.records.push(record);
-  await atomicWriteFile(paths.evidencePath, `${JSON.stringify(log, null, 2)}\n`);
+  await atomicWriteFile(paths.evidencePath, `${JSON.stringify(log, null, 2)}\n`, paths.root);
 }

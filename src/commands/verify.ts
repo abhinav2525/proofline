@@ -9,8 +9,11 @@ import { ExitCode } from "../cli/exit-codes.ts";
 import { VERSION } from "../version.ts";
 import { requireContract, type CommandContext, type CommandResult } from "../cli/command.ts";
 
-/** Bytes of (redacted) output kept per run in the evidence log. */
-const PREVIEW_BYTES = 4_000;
+/**
+ * Byte threshold above which a run's output is flagged `truncated`. Output is
+ * never stored — only its digest and byte count — so this only affects the flag.
+ */
+const OUTPUT_CAP_BYTES = 1_000_000;
 
 /** Resolve which criteria are in scope, honouring an optional --criterion filter. */
 function selectCriteria(
@@ -84,6 +87,8 @@ export async function runVerify(ctx: CommandContext): Promise<CommandResult> {
   }> = [];
   let evidenceRecorded = 0;
   let anyFailure = false;
+  // Terminal-only diagnostics (e.g. containment refusals). Never persisted.
+  const diagnostics: string[] = [];
 
   for (const verifierId of verifierSel.ids) {
     const verifier = byId.get(verifierId);
@@ -91,9 +96,10 @@ export async function runVerify(ctx: CommandContext): Promise<CommandResult> {
 
     const run = await runVerifier(verifier, {
       projectRoot: ctx.paths.root,
-      maxOutputBytes: PREVIEW_BYTES,
+      maxOutputBytes: OUTPUT_CAP_BYTES,
     });
     if (run.result !== "passed") anyFailure = true;
+    if (run.diagnostic) diagnostics.push(`${verifierId}: ${run.diagnostic}`);
     ran.push({
       verifierId,
       result: run.result,
@@ -119,7 +125,6 @@ export async function runVerify(ctx: CommandContext): Promise<CommandResult> {
         timestamp: new Date().toISOString(),
         outputBytes: run.outputBytes,
         outputDigest: run.outputDigest,
-        outputPreview: run.outputPreview,
         truncated: run.truncated,
       };
       const check = validateEvidenceRecord(record);
@@ -149,5 +154,6 @@ export async function runVerify(ctx: CommandContext): Promise<CommandResult> {
     code: anyFailure ? ExitCode.VERIFY_FAILED : ExitCode.OK,
     json: { ok: !anyFailure, contractDigest: digest, ran, evidenceRecorded },
     human: humanLines.join("\n"),
+    stderr: diagnostics.length ? diagnostics.join("\n") : undefined,
   };
 }

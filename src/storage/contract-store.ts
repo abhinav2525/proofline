@@ -72,5 +72,5 @@ export async function saveContract(
     aliasDuplicateObjects: false,
     lineWidth: 100,
   });
-  await atomicWriteFile(paths.contractPath, `${CONTRACT_HEADER}${body}`);
+  await atomicWriteFile(paths.contractPath, `${CONTRACT_HEADER}${body}`, paths.root);
 }

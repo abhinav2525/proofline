@@ -38,7 +38,6 @@ function passed(digest: string, criterionId: string, verifierId: string): Eviden
     timestamp: "2026-08-02T00:00:00.000Z",
     outputBytes: 5,
     outputDigest: "0".repeat(64),
-    outputPreview: "secret-looking-output",
     truncated: false,
   };
 }
@@ -65,8 +64,11 @@ describe("buildContextPack", () => {
     const digest = contractDigest(c);
     const pack = buildContextPack(c, [passed(digest, "unit", "v-unit")], digest);
     expect(pack.latestEvidence.length).toBeGreaterThan(0);
+    // The context summary carries only structural run metadata — no output,
+    // preview, digest, or byte count.
     const serialized = JSON.stringify(pack.latestEvidence);
-    expect(serialized).not.toContain("secret-looking-output");
     expect(serialized).not.toContain("outputPreview");
+    expect(serialized).not.toContain("outputDigest");
+    expect(serialized).not.toContain("outputBytes");
   });
 });

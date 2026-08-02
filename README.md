@@ -36,8 +36,8 @@ signed, notarized, or published.
 - **Verifier** — a validated `argv` array (never a shell string) plus a
   project-relative `cwd` and a bounded `timeoutMs`.
 - **Evidence** — `.proofline/evidence.json`: an append-only, non-secret record
-  of each verifier run (result, timing, output digest, bounded redacted
-  preview, and the contract digest it applied to).
+  of each verifier run (result, timing, output byte count and digest, and the
+  contract digest it applied to). Verifier output itself is never persisted.
 
 ### Criterion states (`status`)
 
@@ -83,8 +83,9 @@ proofline status
 - **Minimal environment.** Children receive only an allowlisted subset of
   environment variables; parent secrets are not inherited, and the environment
   is never written to evidence.
-- **Redacted, bounded evidence.** Output is captured up to a byte cap and passed
-  through best-effort secret redaction; a digest of the full output is stored.
+- **Non-secret, bounded evidence.** Verifier output is not persisted. Evidence
+  retains only its byte count and SHA-256 digest, so an arbitrary secret emitted
+  by a verifier cannot be copied into `.proofline/evidence.json`.
 - **Root containment & atomic writes.** A verifier `cwd` may not escape the
   project root. All state is written atomically (temp file + fsync + rename).
 - **Restricted YAML.** Contracts must be a single plain document — no multiple

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
 import type { Verifier } from "../domain/contract-schema.ts";
 import type { VerifierResult } from "../domain/evidence-schema.ts";
 import { resolveWithinRoot } from "../domain/paths-safety.ts";
@@ -32,6 +34,33 @@ export class VerifierCancelledError extends Error {
   override name = "VerifierCancelledError";
 }
 
+/**
+ * After the timeout fires we kill the whole process group; give descendants a
+ * bounded grace to release the stdio pipes, then stop waiting no matter what.
+ * This guarantees `verify` can never block indefinitely on an inherited pipe.
+ */
+const DRAIN_GRACE_MS = 1500;
+
+/**
+ * Force-terminate the verifier and everything it spawned.
+ *
+ * The child is spawned `detached`, so on POSIX it is its own process-group
+ * leader (setsid) and `process.kill(-pid, "SIGKILL")` reaps the entire group —
+ * grandchildren included. If that is unavailable (already gone, or a non-POSIX
+ * platform), we fall back to force-killing at least the direct child.
+ */
+function killProcessGroup(proc: Bun.Subprocess): void {
+  try {
+    process.kill(-proc.pid, "SIGKILL");
+  } catch {
+    try {
+      proc.kill(9);
+    } catch {
+      /* already dead */
+    }
+  }
+}
+
 export interface RunOptions {
   projectRoot: string;
   /** Max bytes of output kept as a (redacted) preview. */
@@ -47,11 +76,19 @@ export interface VerifierRunResult {
   result: VerifierResult;
   exitCode: number | null;
   durationMs: number;
+  /** Total bytes of output produced (stdout+stderr). Not persisted verbatim. */
   outputBytes: number;
+  /** sha256 of the full captured output. The output itself is never stored. */
   outputDigest: string;
-  outputPreview: string;
   truncated: boolean;
+  /**
+   * A short, redacted, terminal-only diagnostic (e.g. a containment refusal
+   * reason). It is NOT verifier output and is never written to evidence.
+   */
+  diagnostic?: string;
 }
+
+const EMPTY_OUTPUT_DIGEST = createHash("sha256").update("").digest("hex");
 
 function buildChildEnv(options: RunOptions): Record<string, string> {
   const source = options.parentEnv ?? process.env;
@@ -64,16 +101,60 @@ function buildChildEnv(options: RunOptions): Record<string, string> {
   return env;
 }
 
+type CwdResolution = { ok: true; cwd: string } | { ok: false; reason: string };
+
+/**
+ * Resolve the verifier working directory and confirm real containment.
+ *
+ * Lexical checks alone are unsafe: a symlink *inside* the project root that
+ * points elsewhere passes a `path.relative` test yet makes the child run
+ * outside the root. So we canonicalize both the project root and the resolved
+ * cwd with `realpath` and require the real cwd to sit within the real root.
+ * Missing paths become a controlled refusal — never a weakened check.
+ */
+async function resolveContainedCwd(
+  projectRoot: string,
+  relativeCwd: string,
+): Promise<CwdResolution> {
+  const lexical = resolveWithinRoot(projectRoot, relativeCwd);
+  if (lexical === null) {
+    return { ok: false, reason: `cwd '${relativeCwd}' escapes the project root` };
+  }
+
+  let realRoot: string;
+  try {
+    realRoot = await realpath(projectRoot);
+  } catch {
+    return { ok: false, reason: "project root does not exist" };
+  }
+
+  let realCwd: string;
+  try {
+    realCwd = await realpath(lexical);
+  } catch {
+    return { ok: false, reason: `cwd '${relativeCwd}' does not exist` };
+  }
+
+  const rel = path.relative(realRoot, realCwd);
+  const escapes =
+    rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+  if (rel !== "" && escapes) {
+    return { ok: false, reason: `cwd '${relativeCwd}' resolves outside the project root` };
+  }
+  return { ok: true, cwd: realCwd };
+}
+
 function spawnErrorResult(durationMs: number, note: string): VerifierRunResult {
-  const redacted = redactSecrets(note);
+  // A spawn-error produces no verifier output; the note is our own message and
+  // is surfaced only as a terminal diagnostic, never persisted.
   return {
     result: "spawn-error",
     exitCode: null,
     durationMs,
-    outputBytes: Buffer.byteLength(redacted, "utf8"),
-    outputDigest: createHash("sha256").update(redacted, "utf8").digest("hex"),
-    outputPreview: redacted,
+    outputBytes: 0,
+    outputDigest: EMPTY_OUTPUT_DIGEST,
     truncated: false,
+    diagnostic: redactSecrets(note),
   };
 }
 
@@ -86,26 +167,20 @@ export async function runVerifier(
     throw new VerifierCancelledError("verifier run cancelled before start");
   }
 
-  const cwd = resolveWithinRoot(options.projectRoot, verifier.cwd);
-  if (cwd === null) {
-    return spawnErrorResult(
-      Date.now() - start,
-      `refused: cwd '${verifier.cwd}' escapes the project root`,
-    );
+  const contained = await resolveContainedCwd(options.projectRoot, verifier.cwd);
+  if (!contained.ok) {
+    return spawnErrorResult(Date.now() - start, `refused: ${contained.reason}`);
   }
+  const cwd = contained.cwd;
 
-  // Incremental hash over the full output; a small capped preview for evidence.
+  // Incremental hash over the full output; the output itself is never retained.
+  // Only a digest and byte count leave this function.
   const hash = createHash("sha256");
   let totalBytes = 0;
-  let preview = Buffer.alloc(0);
   const cap = options.maxOutputBytes;
   const consume = (chunk: Uint8Array): void => {
     hash.update(chunk);
     totalBytes += chunk.length;
-    if (preview.length < cap) {
-      const room = cap - preview.length;
-      preview = Buffer.concat([preview, Buffer.from(chunk.subarray(0, room))]);
-    }
   };
 
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -113,6 +188,9 @@ export async function runVerifier(
     proc = Bun.spawn(verifier.argv, {
       cwd,
       env: buildChildEnv(options),
+      // Own process group so a timeout can reap the whole subtree, not just the
+      // direct child (which would leave descendants holding the stdio pipes).
+      detached: true,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -128,12 +206,12 @@ export async function runVerifier(
   let cancelled = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    proc.kill(9);
+    killProcessGroup(proc);
   }, verifier.timeoutMs);
 
   const onAbort = (): void => {
     cancelled = true;
-    proc.kill(9);
+    killProcessGroup(proc);
   };
   options.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -141,25 +219,55 @@ export async function runVerifier(
     for await (const chunk of stream) consume(chunk);
   };
 
-  try {
-    await Promise.all([readStream(proc.stdout), readStream(proc.stderr)]);
-    await proc.exited;
-  } catch (e) {
-    clearTimeout(timer);
-    options.signal?.removeEventListener("abort", onAbort);
-    if (cancelled) throw new VerifierCancelledError("verifier run cancelled");
-    return spawnErrorResult(
-      Date.now() - start,
-      `execution error: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
+  // Read both pipes and wait for exit, but never longer than the timeout plus a
+  // bounded drain grace. If descendants keep a pipe open past that, we abandon
+  // the read (and force-kill the group again) rather than block verify forever.
+  let readsSettled = false;
+  const readAll = Promise.all([readStream(proc.stdout), readStream(proc.stderr)]);
+  let completionError: unknown = null;
+  const completion = (async () => {
+    try {
+      await readAll;
+      await proc.exited;
+    } catch (e) {
+      completionError = e;
+    } finally {
+      readsSettled = true;
+    }
+  })();
+
+  let drainAbandoned = false;
+  await Promise.race([
+    completion,
+    (async () => {
+      const remaining = verifier.timeoutMs + DRAIN_GRACE_MS - (Date.now() - start);
+      await Bun.sleep(Math.max(0, remaining));
+      if (!readsSettled) drainAbandoned = true;
+    })(),
+  ]);
+
   clearTimeout(timer);
   options.signal?.removeEventListener("abort", onAbort);
 
+  if (drainAbandoned) {
+    // A descendant is still holding a pipe. Stop reading and ensure the group
+    // is gone; classify as timed-out since the check did not complete cleanly.
+    timedOut = true;
+    killProcessGroup(proc);
+    await proc.stdout.cancel().catch(() => {});
+    await proc.stderr.cancel().catch(() => {});
+  }
+
   if (cancelled) throw new VerifierCancelledError("verifier run cancelled");
 
+  if (completionError && !timedOut) {
+    return spawnErrorResult(
+      Date.now() - start,
+      `execution error: ${completionError instanceof Error ? completionError.message : String(completionError)}`,
+    );
+  }
+
   const durationMs = Date.now() - start;
-  const previewText = redactSecrets(preview.toString("utf8"));
 
   let result: VerifierResult;
   if (timedOut) {
@@ -176,7 +284,6 @@ export async function runVerifier(
     durationMs,
     outputBytes: totalBytes,
     outputDigest: hash.digest("hex"),
-    outputPreview: previewText,
-    truncated: totalBytes > cap,
+    truncated: totalBytes > cap || drainAbandoned,
   };
 }

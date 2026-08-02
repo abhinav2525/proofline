@@ -2,9 +2,11 @@ import { z } from "zod";
 
 /**
  * Evidence is an append-only, non-secret record of what a verifier did. It
- * stores a bounded, redacted output preview plus a digest of the full output —
- * never raw secrets, never the inherited environment. The contract digest ties
- * each record to the exact contract that was in effect.
+ * stores only structural metadata plus a digest and byte count of the output —
+ * never the output itself, never a content-derived preview, never the inherited
+ * environment. Verifier output can contain arbitrary secrets that no redaction
+ * can reliably detect, so it is deliberately not persisted. The contract digest
+ * ties each record to the exact contract that was in effect.
  */
 
 export const VERIFIER_RESULTS = [
@@ -30,7 +32,6 @@ export const evidenceRecordSchema = z.strictObject({
   timestamp: z.iso.datetime(),
   outputBytes: z.number().int().nonnegative(),
   outputDigest: sha256Hex,
-  outputPreview: z.string(),
   truncated: z.boolean(),
 });
 

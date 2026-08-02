@@ -44,7 +44,6 @@ function evidence(
     timestamp,
     outputBytes: 0,
     outputDigest: "0".repeat(64),
-    outputPreview: "",
     truncated: false,
   };
 }

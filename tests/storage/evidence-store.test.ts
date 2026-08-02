@@ -28,7 +28,6 @@ function record(id: string): EvidenceRecord {
     timestamp: "2026-08-02T00:00:00.000Z",
     outputBytes: 0,
     outputDigest: "0".repeat(64),
-    outputPreview: "",
     truncated: false,
   };
 }

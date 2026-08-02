@@ -20,6 +20,12 @@ export function isSafeRelativePath(candidate: string): boolean {
 /**
  * Resolve a project-relative path and confirm it stays within `root`.
  * Returns the absolute resolved path, or null if it would escape.
+ *
+ * This check is purely LEXICAL: it does not follow symlinks. A symlink inside
+ * the root that points outside can pass this test yet really escape. Before
+ * executing anything, the runner must additionally canonicalize both paths with
+ * `realpath` and re-check containment (see `resolveContainedCwd` in
+ * `src/execution/verifier-runner.ts`).
  */
 export function resolveWithinRoot(root: string, relative: string): string | null {
   const absoluteRoot = path.resolve(root);
