@@ -8,7 +8,7 @@ import { cleanup, makeProject, runCli } from "./helpers.ts";
 // source avoids triggering generic-entropy scanners while retaining the exact
 // non-persistence guarantee this test covers.
 const SECRET = createHash("sha256")
-  .update("proofline-test-unlabelled-runtime-output")
+  .update("Proofline test fixture runtime output")
   .digest("base64url");
 
 const CONTRACT = `version: 1
