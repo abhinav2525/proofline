@@ -1,13 +1,15 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { cleanup, makeProject, runCli } from "./helpers.ts";
 
-// An unlabelled, high-entropy token. There is no "key=" / "Bearer" marker, so
-// regex redaction cannot recognise it — exactly the case that proves we must not
-// persist verifier output at all. The verifier *reads it from a file* so the
-// token appears only in runtime output, never in the contract/argv on disk.
-const SECRET = "Zx9Qv2Lm8Kp4Rt7Wn3Bd6Fh1Jc5Gs0Ay8Ue4Ir2Ol";
+// Generate an unlabelled secret-shaped value at test runtime. Keeping it out of
+// source avoids triggering generic-entropy scanners while retaining the exact
+// non-persistence guarantee this test covers.
+const SECRET = createHash("sha256")
+  .update("proofline-test-unlabelled-runtime-output")
+  .digest("base64url");
 
 const CONTRACT = `version: 1
 outcome: evidence must not carry secrets
