@@ -1,121 +1,233 @@
 # Proofline
 
-A private, local-first CLI that maintains one delivery contract per project,
-runs only explicitly declared verification commands, records non-secret
-evidence, and reports whether delivery criteria are proven.
+**From intent to verified delivery.**
 
-> **Status:** v1, private and local only. No publishing, no remote service, no
-> agent/hook/MCP integration. "Proofline" is a working name.
+Proofline is a small, local-first CLI for keeping an AI-assisted software delivery agreement in the repository itself:
 
-## Install (local)
+```text
+intent → constraints → acceptance criteria → verification evidence → human approval
+```
 
-Proofline is a Bun + TypeScript project. Run it from source or build a local
-binary.
+It does not write your application code, manage agents, deploy software, or replace Git. It makes the *definition of done* and the evidence for it explicit and reviewable.
+
+## What it does
+
+For each project, Proofline keeps:
+
+- **a delivery contract** in `.proofline/delivery.yaml` — outcome, constraints, acceptance criteria, verifier commands, and required approvals;
+- **verification evidence** in `.proofline/evidence.json` — bounded metadata about each verifier run;
+- **a compact status** showing what is proven, failed, blocked, or still unproven.
+
+A successful verifier is **evidence only**. It never automatically finalizes a delivery; human approval remains explicit.
+
+## Requirements
+
+- macOS on Apple Silicon for the current compiled binary target;
+- [Bun](https://bun.sh/) for running from source or building the local binary.
+
+Proofline is currently private, local-only software. There is no hosted service, account, telemetry, remote sync, or package release.
+
+## Install and build
 
 ```bash
+git clone git@github.com:abhinav2525/proofline.git
+cd proofline
 bun install --frozen-lockfile
-
-# Run from source:
-bun run src/cli/main.ts --help
-
-# Or build a local macOS Apple Silicon executable:
 bun run build
+
+# Confirm the local binary works
 ./dist/proofline --help
 ```
 
-The build produces `dist/proofline` for `bun-darwin-arm64` only. It is **not**
-signed, notarized, or published.
+The build creates `dist/proofline` for `bun-darwin-arm64`. It is not signed, notarized, or published.
 
-## Concepts
+To run directly from source during development:
 
-- **Delivery contract** — `.proofline/delivery.yaml`: one versioned document
-  describing the `outcome`, `mode`, `constraints`, acceptance `criteria`,
-  `verifiers`, and `approvals`.
-- **Criterion** — a thing that must be true to deliver. It is proven by one or
-  more verifiers and/or a manual approval.
-- **Verifier** — a validated `argv` array (never a shell string) plus a
-  project-relative `cwd` and a bounded `timeoutMs`.
-- **Evidence** — `.proofline/evidence.json`: an append-only, non-secret record
-  of each verifier run (result, timing, output byte count and digest, and the
-  contract digest it applied to). Verifier output itself is never persisted.
+```bash
+bun run src/cli/main.ts --help
+```
 
-### Criterion states (`status`)
+## Quick start
 
-| State      | Meaning                                                        |
-|------------|----------------------------------------------------------------|
-| `proven`   | Every requirement satisfied under the current contract digest. |
-| `unproven` | No failing evidence, but proof is incomplete (a run is missing).|
-| `failed`   | A referenced verifier's latest matching evidence did not pass. |
-| `blocked`  | Requires an approval that has not been granted.                |
+Use the binary from inside the project you want to track. In the examples below, replace `/path/to/proofline` with this repository's path.
+
+```bash
+cd /path/to/your-project
+/path/to/proofline/dist/proofline init
+/path/to/proofline/dist/proofline brief
+```
+
+`brief` opens an interactive prompt for the delivery outcome, constraints, verifier commands, and acceptance criteria. Then validate and verify the contract:
+
+```bash
+/path/to/proofline/dist/proofline validate
+/path/to/proofline/dist/proofline context
+/path/to/proofline/dist/proofline verify
+/path/to/proofline/dist/proofline status
+```
+
+## A complete example
+
+Suppose the goal is to add a feature that must pass unit tests, typecheck, and receive a human review.
+
+Create an `answers.json` file in the target project:
+
+```json
+{
+  "outcome": "Add the export feature without breaking existing behavior.",
+  "mode": "strict",
+  "constraints": [
+    "Do not deploy or publish anything.",
+    "Do not place credentials in verifier arguments."
+  ],
+  "verifiers": [
+    {
+      "id": "unit-tests",
+      "description": "Run the unit test suite",
+      "argv": ["bun", "test"],
+      "cwd": ".",
+      "timeoutMs": 120000
+    },
+    {
+      "id": "typecheck",
+      "description": "Run the TypeScript typecheck",
+      "argv": ["bun", "run", "typecheck"],
+      "cwd": ".",
+      "timeoutMs": 60000
+    }
+  ],
+  "criteria": [
+    {
+      "id": "tests-pass",
+      "description": "All unit tests pass.",
+      "verifiers": ["unit-tests"],
+      "requiresApproval": false
+    },
+    {
+      "id": "types-pass",
+      "description": "The project typechecks without errors.",
+      "verifiers": ["typecheck"],
+      "requiresApproval": false
+    },
+    {
+      "id": "human-review",
+      "description": "The delivery has been reviewed and accepted by the owner.",
+      "verifiers": [],
+      "requiresApproval": true
+    }
+  ],
+  "approvals": []
+}
+```
+
+Create the contract from that file, then run it:
+
+```bash
+/path/to/proofline/dist/proofline init
+cat answers.json | /path/to/proofline/dist/proofline brief --json
+/path/to/proofline/dist/proofline validate
+/path/to/proofline/dist/proofline verify
+/path/to/proofline/dist/proofline status
+```
+
+In strict mode, `status` remains blocked until a required human approval is recorded:
+
+```bash
+/path/to/proofline/dist/proofline approve human-review \
+  --by "Abhinav" \
+  --note "Reviewed the export feature"
+
+/path/to/proofline/dist/proofline status
+```
+
+`approve` runs **no verifiers** and does not make a delivery decision on its own. It records the human decision; the final `status` combines that approval with current verification evidence.
 
 ## Commands
 
+| Command | Purpose |
+|---|---|
+| `proofline init` | Create `.proofline/`. Never overwrites an existing contract. |
+| `proofline brief` | Author a contract interactively, or read JSON answers from standard input. |
+| `proofline validate` | Validate the contract without running anything. |
+| `proofline context` | Print a compact, non-secret view of remaining work. |
+| `proofline verify` | Run declared verifiers and record non-secret evidence. |
+| `proofline status` | Report whether each criterion is proven, failed, blocked, or unproven. |
+| `proofline approve <criterion> --by <name>` | Record a required human approval. |
+
+Useful options:
+
+```text
+--json                    machine-readable stdout
+--root <dir>              target project root; defaults to the current directory
+--criterion <id>          verify only one or more criteria; repeatable
+--verifier <id>           verify only one or more verifiers; repeatable
+--by <name>               required approver name for `approve`
+--note <note>             optional approval note
+--force                   allow `brief` to replace an existing contract
+-h, --help                command help
+-v, --version             version
 ```
-proofline init       Create .proofline/ (never overwrites an existing contract)
-proofline brief      Author a contract (interactive TTY, or JSON answers on stdin)
-proofline validate   Check the contract is well-formed
-proofline context    Compact, non-secret snapshot of remaining work
-proofline status     Report each criterion's state
-proofline verify     Run declared verifiers and record evidence
-proofline approve    Record a human approval for a criterion that requires one
+
+## Reading status
+
+| State | Meaning |
+|---|---|
+| `proven` | Every verifier and/or required approval is satisfied for the current contract. |
+| `unproven` | No current failing evidence, but a required verifier has not run. |
+| `failed` | The latest applicable verifier evidence failed. |
+| `blocked` | A required human approval has not yet been recorded. |
+
+`status` exits with code `0` when a strict contract is ready, and `1` when it is not ready. A passing `verify` can still leave `status` blocked or unproven.
+
+## Safety model
+
+Proofline treats declared verification as a security boundary:
+
+- **argv only:** verifiers are executed with validated argument arrays through `Bun.spawn`; Proofline never invokes `Bun.$`, `sh -c`, `bash -c`, or `eval`;
+- **project containment:** verifier working directories and state writes are checked against the project root, including symlink escape prevention;
+- **timeouts:** each verifier has a bounded timeout; on the supported macOS target, the verifier process group is terminated on timeout;
+- **minimal environment:** children receive only a small allowlisted environment, not the full parent environment;
+- **non-secret evidence:** verifier output is never persisted. Evidence stores only structural metadata, output byte count, and an SHA-256 digest;
+- **restricted YAML:** contracts reject multiple documents, anchors, aliases, custom tags, unknown fields, and invalid path shapes;
+- **atomic state writes:** contract and evidence updates use temporary files, fsync, and rename.
+
+> **Do not put credentials, tokens, passwords, or API keys in verifier arguments.** Proofline intentionally records verifier argv values in the contract and evidence so the check is reviewable. Use a local, user-controlled credential mechanism outside the contract when authentication is genuinely needed.
+
+Running `verify` executes reviewed commands with your OS permissions. Read a contract before running it.
+
+## Project files
+
+```text
+.proofline/
+├── delivery.yaml     # contract: outcome, criteria, verifiers, approvals
+└── evidence.json     # append-only verification evidence
 ```
 
-Global flags: `--json` (machine-readable stdout), `--root <dir>`,
-`-h/--help`, `-v/--version`. `verify` accepts repeatable `--criterion <id>` and
-`--verifier <id>` filters. `approve` takes the criterion id as a positional plus
-a required `--by <name>` and an optional `--note <note>`. `brief`/`init` accept
-`--force`.
+Proofline does not automatically add these files to Git. Decide per project whether the contract and evidence should remain local or be versioned.
 
-`approve` records a delivery decision, not a check: it runs no verifiers and
-never finalizes delivery. A criterion with `requiresApproval: true` stays
-`blocked` until approved, even when its verifiers pass. Because the verification
-digest excludes approvals, granting one turns a `blocked` criterion `proven`
-without invalidating current verifier evidence — no rerun needed.
-
-### Example
+## Development
 
 ```bash
-proofline init
-# author interactively, or pipe answers:
-cat answers.json | proofline brief
-proofline validate
-proofline verify
-proofline status
-# for a criterion that requires sign-off, once its verifiers pass:
-proofline approve <criterion> --by "Your Name" --note "reviewed"
+bun test            # full test suite
+bun run typecheck   # TypeScript typecheck
+bun run build       # build local macOS Apple Silicon binary
+./dist/proofline --help
 ```
 
-> **Never put credentials, tokens, passwords, or API keys in verifier arguments.**
-> Proofline records each verifier's argv in the delivery contract and its
-> evidence records so that verification remains reviewable. Use a local,
-> user-controlled credential mechanism outside the contract when a verifier
-> genuinely needs authentication.
+## Non-goals in v1
 
-## Execution & security limits
-
-- **argv only.** Verifiers are executed via `Bun.spawn` with a validated
-  argument array. Proofline never invokes a shell, `Bun.$`, `sh -c`, `bash -c`,
-  or `eval`. Running `verify` executes reviewed commands **with your own OS
-  permissions** — review the contract before running it.
-- **Minimal environment.** Children receive only an allowlisted subset of
-  environment variables; parent secrets are not inherited, and the environment
-  is never written to evidence.
-- **Non-secret, bounded evidence.** Verifier output is not persisted. Evidence
-  retains only its byte count and SHA-256 digest, so an arbitrary secret emitted
-  by a verifier cannot be copied into `.proofline/evidence.json`.
-- **Root containment & atomic writes.** A verifier `cwd` may not escape the
-  project root. All state is written atomically (temp file + fsync + rename).
-- **Restricted YAML.** Contracts must be a single plain document — no multiple
-  documents, anchors, aliases, or custom tags.
-
-## Non-goals (v1)
-
-- No web UI, API server, database, authentication, telemetry, or cloud sync.
-- No agent orchestration, Claude Code hooks, MCP server, or Hermes plugin.
-- No automatic commits, pushes, deployment, or delivery finalization. A passing
-  verifier is evidence, never approval — that decision stays with a human.
+- no web UI, API server, database, accounts, telemetry, or cloud sync;
+- no agent orchestration, Claude Code hooks, MCP server, or Hermes plugin;
+- no automatic Git commits, pushes, deployment, publishing, or delivery finalization.
 
 ## Exit codes
 
-`0` ok · `1` not proven (strict `status`) · `2` usage · `3` no contract ·
-`4` invalid contract · `5` a verifier did not pass · `6` runtime error.
+```text
+0  success
+1  strict status is not ready
+2  usage error
+3  no contract found
+4  invalid contract
+5  one or more verifiers did not pass
+6  runtime error
+```
